@@ -1,0 +1,762 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>psxroute</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230f8a6f'/%3E%3Cpath d='M9 22c0-6 14-6 14-12' stroke='white' stroke-width='3' fill='none' stroke-linecap='round'/%3E%3Ccircle cx='9' cy='22' r='3' fill='white'/%3E%3Ccircle cx='23' cy='10' r='3' fill='white'/%3E%3C/svg%3E">
+<style>
+:root {
+  --bg: #f4f6f8;
+  --surface: #ffffff;
+  --surface-2: #f0f3f5;
+  --text: #15191e;
+  --muted: #5d6773;
+  --line: #e1e6ea;
+  --accent: #0f8a6f;
+  --accent-text: #ffffff;
+  --accent-soft: #e2f4ef;
+  --warn: #b4520e;
+  --warn-soft: #fdf0e6;
+  --danger: #b42318;
+  --ok: #12a150;
+  --idle: #9aa4ae;
+  --shadow: 0 1px 2px rgba(16, 24, 32, .06), 0 2px 8px rgba(16, 24, 32, .04);
+  --radius: 14px;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0e1215;
+    --surface: #161b20;
+    --surface-2: #1d2329;
+    --text: #e8ecef;
+    --muted: #97a2ad;
+    --line: #262e35;
+    --accent: #2fc59f;
+    --accent-text: #06231b;
+    --accent-soft: #123229;
+    --warn: #f3a061;
+    --warn-soft: #33220f;
+    --danger: #ff7b6e;
+    --ok: #3ad27f;
+    --idle: #5b6670;
+    --shadow: none;
+  }
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; background: var(--bg); color: var(--text);
+  font: 16px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+button, input { font: inherit; color: inherit; }
+.wrap { max-width: 880px; margin: 0 auto; padding: 0 16px; }
+
+/* Top bar */
+.top { position: sticky; top: 0; z-index: 5; background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); }
+.top .wrap { display: flex; align-items: center; gap: 12px; height: 60px; }
+.brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 18px; letter-spacing: -.01em; }
+.brand svg { width: 28px; height: 28px; flex: none; }
+.mode { font-size: 12px; font-weight: 600; color: var(--muted); border: 1px solid var(--line); border-radius: 99px; padding: 2px 9px; white-space: nowrap; }
+.spacer { flex: 1; }
+.status { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; white-space: nowrap; }
+.dot { width: 10px; height: 10px; border-radius: 50%; background: var(--idle); flex: none; }
+.dot.ok { background: var(--ok); box-shadow: 0 0 0 0 color-mix(in srgb, var(--ok) 50%, transparent); animation: pulse 2s infinite; }
+.dot.warn { background: var(--warn); }
+.dot.bad { background: var(--danger); }
+@keyframes pulse { 70% { box-shadow: 0 0 0 7px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
+@media (prefers-reduced-motion: reduce) { .dot.ok { animation: none; } }
+
+main { padding: 20px 0 40px; display: grid; gap: 16px; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); padding: 20px; }
+h2 { font-size: 18px; margin: 0; letter-spacing: -.01em; }
+.sub { color: var(--muted); margin: 4px 0 0; font-size: 15px; }
+.head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+
+/* Setup */
+.steps { list-style: none; counter-reset: step; margin: 16px 0 0; padding: 0; display: grid; gap: 14px; }
+.steps li { counter-increment: step; display: grid; grid-template-columns: 30px 1fr; gap: 12px; align-items: start; }
+.steps li::before { content: counter(step); width: 30px; height: 30px; border-radius: 50%; background: var(--accent-soft); color: var(--accent); font-weight: 700; display: grid; place-items: center; font-size: 15px; }
+.path { font-weight: 600; }
+.values { display: grid; gap: 8px; margin-top: 8px; }
+.value { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; background: var(--surface-2); border-radius: 10px; padding: 8px 8px 8px 12px; }
+.value .k { color: var(--muted); font-size: 14px; min-width: 120px; }
+.value .v { font: 600 18px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; flex: 1; word-break: break-all; }
+.note { margin: 16px 0 0; padding: 12px 14px; border-radius: 10px; background: var(--warn-soft); color: var(--text); font-size: 14px; }
+.collapsed-setup { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+
+/* Buttons */
+.btn { border: 1px solid var(--line); background: var(--surface); border-radius: 10px; padding: 8px 14px; font-weight: 600; font-size: 14px; cursor: pointer; min-height: 40px; white-space: nowrap; }
+.btn:hover { background: var(--surface-2); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+.btn.primary:hover { filter: brightness(1.05); }
+.btn.small { min-height: 34px; padding: 5px 12px; }
+.btn:disabled { opacity: .55; cursor: default; }
+.link { background: none; border: 0; padding: 4px 2px; color: var(--accent); font-weight: 600; cursor: pointer; font-size: 14px; }
+:focus-visible { outline: 3px solid color-mix(in srgb, var(--accent) 55%, transparent); outline-offset: 2px; }
+
+/* Tiles */
+.tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+.tile { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); padding: 14px 16px; min-width: 0; }
+.tile .k { color: var(--muted); font-size: 13px; font-weight: 600; }
+.tile .v { font-size: 24px; font-weight: 700; letter-spacing: -.02em; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tile .v.text { font-size: 16px; line-height: 1.35; white-space: normal; margin-top: 6px; }
+@media (max-width: 720px) { .tiles { grid-template-columns: 1fr 1fr; } }
+
+/* Lists */
+.list { margin-top: 14px; border-top: 1px solid var(--line); }
+.row { border-bottom: 1px solid var(--line); }
+.row:last-child { border-bottom: 0; }
+.row-head { display: flex; align-items: center; gap: 12px; padding: 12px 0; }
+.toggle { display: flex; align-items: center; gap: 12px; flex: 1; min-width: 0; background: none; border: 0; padding: 0; text-align: left; cursor: pointer; }
+.chev { width: 18px; height: 18px; flex: none; color: var(--muted); transition: transform .15s; }
+.row.open .chev { transform: rotate(90deg); }
+.title { font-weight: 600; overflow-wrap: anywhere; }
+.title .label { color: var(--muted); font-weight: 500; }
+.meta { color: var(--muted); font-size: 14px; display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 2px; }
+.live { color: var(--ok); font-weight: 600; }
+.tag { display: inline-block; font-size: 12px; font-weight: 600; padding: 1px 8px; border-radius: 99px; background: var(--accent-soft); color: var(--accent); margin-left: 6px; vertical-align: 1px; }
+.problem { margin: 0 0 12px 30px; padding: 10px 12px; border-radius: 10px; background: var(--warn-soft); font-size: 14px; }
+.names { list-style: none; margin: 0 0 12px 30px; padding: 0; display: none; }
+.row.open .names { display: block; }
+.names li { display: flex; justify-content: space-between; gap: 12px; padding: 6px 0; font-size: 14px; border-top: 1px dashed var(--line); }
+.names .n { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
+.names .m { color: var(--muted); white-space: nowrap; text-align: right; }
+.names .p { color: var(--warn); display: block; font-family: inherit; white-space: normal; }
+.empty { color: var(--muted); padding: 22px 4px 6px; text-align: center; }
+.empty strong { display: block; color: var(--text); margin-bottom: 4px; }
+.search { width: 100%; margin-top: 14px; padding: 10px 14px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface-2); min-height: 44px; }
+.more { display: block; margin: 12px auto 0; }
+
+/* Rules */
+details.card > summary { cursor: pointer; list-style: none; display: flex; align-items: center; gap: 10px; }
+details.card > summary::-webkit-details-marker { display: none; }
+details.card[open] > summary .chev { transform: rotate(90deg); }
+.add { display: flex; gap: 8px; margin-top: 14px; }
+.add input { flex: 1; min-width: 0; padding: 8px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface-2); min-height: 40px; }
+.rules { list-style: none; margin: 12px 0 0; padding: 0; }
+.rules li { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid var(--line); }
+.rules .d { flex: 1; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
+.rules .s { color: var(--muted); font-size: 13px; white-space: nowrap; }
+
+/* Coverage choice */
+.choices { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 14px; }
+@media (max-width: 600px) { .choices { grid-template-columns: 1fr; } }
+.choice { position: relative; display: block; border: 2px solid var(--line); border-radius: 12px; padding: 12px 14px 12px 44px; cursor: pointer; background: var(--surface); }
+.choice input { position: absolute; left: 14px; top: 15px; width: 18px; height: 18px; accent-color: var(--accent); margin: 0; }
+.choice b { display: block; }
+.choice span { display: block; color: var(--muted); font-size: 14px; margin-top: 2px; }
+.choice:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
+.choice:has(input:disabled) { cursor: not-allowed; opacity: .6; }
+.choice .rec { display: inline-block; margin-left: 6px; font-size: 12px; font-weight: 600; color: var(--accent); }
+.hint { margin: 10px 0 0; font-size: 14px; color: var(--muted); }
+.hint code { font-size: 13px; background: var(--surface-2); padding: 1px 6px; border-radius: 6px; }
+
+/* Connection monitor */
+.mon-tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 14px; }
+@media (max-width: 720px) { .mon-tiles { grid-template-columns: 1fr 1fr; } }
+.mt { background: var(--surface-2); border-radius: 12px; padding: 12px 14px; min-width: 0; }
+.mt .k { color: var(--muted); font-size: 13px; font-weight: 600; }
+.mt .v { font-size: 28px; font-weight: 700; letter-spacing: -.02em; font-variant-numeric: tabular-nums; line-height: 1.2; margin-top: 2px; }
+.mt .v small { font-size: 14px; color: var(--muted); font-weight: 600; margin-left: 3px; }
+.mt .s { color: var(--muted); font-size: 12px; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mt.good .v { color: var(--ok); } .mt.fair .v { color: var(--warn); } .mt.poor .v { color: var(--danger); }
+.match { margin-top: 10px; padding: 10px 14px; border-radius: 12px; background: var(--accent-soft); font-size: 14px; display: flex; flex-wrap: wrap; gap: 4px 16px; }
+.match b { font-variant-numeric: tabular-nums; }
+.chart { margin-top: 12px; }
+.chart svg { display: block; width: 100%; height: 72px; }
+.chart .grid { stroke: var(--line); stroke-width: 1; }
+.chart .l-ping { fill: none; stroke: var(--accent); stroke-width: 2; vector-effect: non-scaling-stroke; stroke-linejoin: round; }
+.chart .l-jit { fill: none; stroke: var(--warn); stroke-width: 1.5; vector-effect: non-scaling-stroke; stroke-linejoin: round; }
+.chart .lost { fill: var(--danger); }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 14px; color: var(--muted); font-size: 12px; margin-top: 4px; }
+.legend i { display: inline-block; width: 10px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 5px; }
+.quality { display: inline-flex; align-items: center; font-size: 13px; font-weight: 700; padding: 3px 10px; border-radius: 99px; white-space: nowrap; }
+.quality.good { background: var(--accent-soft); color: var(--accent); }
+.quality.fair { background: var(--warn-soft); color: var(--warn); }
+.quality.poor { background: color-mix(in srgb, var(--danger) 14%, transparent); color: var(--danger); }
+.quality:empty { display: none; }
+.conns { list-style: none; margin: 12px 0 0; padding: 0; border-top: 1px solid var(--line); }
+.conns li { display: flex; justify-content: space-between; align-items: baseline; gap: 4px 12px; flex-wrap: wrap; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
+.conns li:last-child { border-bottom: 0; }
+.conns .n { font-weight: 600; overflow-wrap: anywhere; }
+.conns .a { color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+.conns .f { color: var(--muted); display: flex; flex-wrap: wrap; gap: 2px 12px; font-variant-numeric: tabular-nums; }
+.conns .f b { color: var(--text); font-weight: 600; }
+.route { font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 99px; background: var(--surface-2); color: var(--muted); margin-left: 6px; vertical-align: 1px; }
+.route.vpn { background: var(--accent-soft); color: var(--accent); }
+
+footer { color: var(--muted); font-size: 13px; padding: 0 0 32px; display: flex; gap: 6px 16px; flex-wrap: wrap; align-items: center; }
+footer a { color: var(--muted); }
+
+/* Toast */
+.toast { position: fixed; left: 50%; bottom: 24px; transform: translate(-50%, 20px); opacity: 0; pointer-events: none; background: var(--text); color: var(--bg); padding: 12px 18px; border-radius: 12px; font-size: 15px; max-width: calc(100% - 32px); transition: .2s; z-index: 10; box-shadow: 0 6px 24px rgba(0,0,0,.2); }
+.toast.show { opacity: 1; transform: translate(-50%, 0); }
+.offline { display: none; background: var(--danger); color: #fff; text-align: center; padding: 8px 16px; font-size: 14px; font-weight: 600; }
+.offline.show { display: block; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+</style>
+</head>
+<body>
+<div class="offline" id="offline" role="alert">psxroute isn't responding. Is it still running?</div>
+<header class="top">
+  <div class="wrap">
+    <div class="brand">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" fill="var(--accent)"/><path d="M9 22c0-6 14-6 14-12" stroke="var(--accent-text)" stroke-width="3" fill="none" stroke-linecap="round"/><circle cx="9" cy="22" r="3" fill="var(--accent-text)"/><circle cx="23" cy="10" r="3" fill="var(--accent-text)"/></svg>
+      psxroute
+    </div>
+    <span class="mode" id="mode"></span>
+    <span class="spacer"></span>
+    <span class="status" id="status" aria-live="polite"><i class="dot"></i><span>Starting…</span></span>
+  </div>
+</header>
+
+<main class="wrap">
+  <section class="card" id="setup" aria-labelledby="setup-title"></section>
+
+  <section class="card" aria-labelledby="cover-title">
+    <h2 id="cover-title">What goes through your VPN</h2>
+    <div class="choices" role="radiogroup" aria-labelledby="cover-title">
+      <label class="choice"><input type="radio" name="cover" value="games" id="cover-games">
+        <b>Game services only <span class="rec">Recommended</span></b>
+        <span>Just the services in your routing rules. Everything else, downloads included, stays fast and direct.</span></label>
+      <label class="choice"><input type="radio" name="cover" value="all" id="cover-all">
+        <b>Everything</b>
+        <span>All PS5 traffic, including PSN and downloads. Slower, but a quick way to test whether a full VPN fixes a game.</span></label>
+    </div>
+    <p class="hint" id="cover-hint"></p>
+  </section>
+
+  <section class="tiles" aria-label="Summary">
+    <div class="tile"><div class="k">Sites through VPN</div><div class="v" id="t-sites">0</div></div>
+    <div class="tile"><div class="k">Open connections</div><div class="v" id="t-open">0</div></div>
+    <div class="tile"><div class="k" id="t-data-k">Data through VPN</div><div class="v" id="t-data">0 B</div></div>
+    <div class="tile"><div class="k">Going out by</div><div class="v text" id="t-exit"></div></div>
+  </section>
+
+  <section class="card" aria-labelledby="mon-title">
+    <div class="head">
+      <div>
+        <h2 id="mon-title">Connection monitor</h2>
+        <p class="sub">Ping, jitter and packet loss on your PS5's own connections. psxroute only watches them and never sends anything of its own.</p>
+      </div>
+      <span class="quality" id="m-quality" aria-live="polite"></span>
+    </div>
+    <div id="mon"></div>
+  </section>
+
+  <section class="card" aria-labelledby="routed-title">
+    <h2 id="routed-title">Going through your VPN</h2>
+    <p class="sub">The game services psxroute is sending through your VPN right now.</p>
+    <div class="list" id="routed"></div>
+  </section>
+
+  <section class="card" aria-labelledby="other-title">
+    <h2 id="other-title">Everything else</h2>
+    <p class="sub">These go straight to the internet as normal. If a game shows an error, find its name here and press <b>Route</b>, then restart the game.</p>
+    <label class="sr" for="q">Search</label>
+    <input class="search" id="q" type="search" placeholder="Search, e.g. ea or battlefield" autocomplete="off">
+    <div class="list" id="other"></div>
+  </section>
+
+  <details class="card" id="rules-card">
+    <summary>
+      <svg class="chev" viewBox="0 0 20 20" aria-hidden="true"><path d="M7 4l6 6-6 6" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <h2>Routing rules <span class="tag" id="rules-count">0</span></h2>
+    </summary>
+    <p class="sub">Each rule covers a domain and everything under it: <b>ea.com</b> also covers <b>accounts.ea.com</b>. Rules you add here are kept when psxroute restarts.</p>
+    <form class="add" id="add-form">
+      <label class="sr" for="add-domain">Domain to route</label>
+      <input id="add-domain" placeholder="Add a domain, e.g. battlefield.com" autocomplete="off" autocapitalize="off" spellcheck="false">
+      <button class="btn primary" type="submit">Route</button>
+    </form>
+    <ul class="rules" id="rules"></ul>
+  </details>
+
+  <footer>
+    <span id="version"></span>
+    <button class="link" id="clear" type="button">Clear history</button>
+    <a href="/hosts.txt">Export names</a>
+  </footer>
+</main>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch (_) { return null; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch (_) {} },
+};
+
+let state = null;
+let lastText = "";
+let failures = 0;
+const open = new Set();          // expanded rows, by key
+let setupPref = store.get("psxroute.setup"); // "shown" | "hidden" | null (automatic)
+let showAllOther = false;
+const busy = new Set();          // domains with a request in flight
+
+function el(tag, attrs, ...kids) {
+  const n = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (v == null || v === false) continue;
+    if (k === "class") n.className = v;
+    else if (k.startsWith("on")) n.addEventListener(k.slice(2), v);
+    else n.setAttribute(k, v === true ? "" : v);
+  }
+  for (const k of kids.flat()) if (k != null && k !== false) n.append(k.nodeType ? k : String(k));
+  return n;
+}
+
+function chev() {
+  const s = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  s.setAttribute("viewBox", "0 0 20 20"); s.setAttribute("class", "chev"); s.setAttribute("aria-hidden", "true");
+  const p = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  p.setAttribute("d", "M7 4l6 6-6 6"); p.setAttribute("stroke", "currentColor"); p.setAttribute("stroke-width", "2");
+  p.setAttribute("fill", "none"); p.setAttribute("stroke-linecap", "round"); p.setAttribute("stroke-linejoin", "round");
+  s.append(p);
+  return s;
+}
+
+let toastTimer;
+function toast(msg) {
+  const t = $("toast");
+  t.textContent = msg;
+  t.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove("show"), 3500);
+}
+
+// Clipboard: the page is plain http on the LAN, where navigator.clipboard
+// often isn't available, so fall back to a hidden textarea.
+async function copy(text) {
+  try {
+    if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(text); return true; }
+  } catch (_) {}
+  const ta = el("textarea", { style: "position:fixed;opacity:0", readonly: true });
+  ta.value = text; document.body.append(ta); ta.select();
+  let ok = false;
+  try { ok = document.execCommand("copy"); } catch (_) {}
+  ta.remove();
+  return ok;
+}
+
+function valueRow(label, value) {
+  return el("div", { class: "value" },
+    el("span", { class: "k" }, label),
+    el("span", { class: "v" }, value),
+    el("button", { class: "btn small", type: "button", onclick: async (e) => {
+      const ok = await copy(value);
+      e.target.textContent = ok ? "Copied" : "Select and copy";
+      setTimeout(() => (e.target.textContent = "Copy"), 1500);
+    } }, "Copy"));
+}
+
+function renderSetup(s) {
+  const box = $("setup");
+  box.replaceChildren();
+  const auto = s.console.connected ? "hidden" : "shown";
+  const show = (setupPref || auto) === "shown";
+  const gw = s.mode === "gateway";
+
+  if (!show) {
+    box.append(el("div", { class: "collapsed-setup" },
+      el("h2", { id: "setup-title" }, "PS5 set up"),
+      el("span", { class: "sub", style: "margin:0;flex:1" },
+        gw ? `Gateway and DNS: ${s.console_ip}` : `DNS: ${s.console_ip}`),
+      el("button", { class: "link", type: "button", onclick: () => { setupPref = "shown"; store.set("psxroute.setup", "shown"); render(); } }, "Show steps")));
+    return;
+  }
+
+  const head = el("div", { class: "head" },
+    el("div", {},
+      el("h2", { id: "setup-title" }, "Set up your PS5"),
+      el("p", { class: "sub" }, s.console.seen ? "Your PS5 has connected before. These are the settings it needs." : "Do this once on the console. This page changes as soon as the PS5 connects.")),
+    el("button", { class: "link", type: "button", onclick: () => { setupPref = "hidden"; store.set("psxroute.setup", "hidden"); render(); } }, "Hide"));
+
+  const steps = el("ol", { class: "steps" },
+    el("li", {}, el("div", {}, "On the PS5, open ", el("span", { class: "path" }, "Settings › Network › Settings › Set Up Internet Connection"), ".")),
+    el("li", {}, el("div", {}, "Highlight your Wi-Fi or LAN network, press the ", el("span", { class: "path" }, "Options"), " button and choose ", el("span", { class: "path" }, "Advanced Settings"), ".")));
+
+  if (gw) {
+    steps.append(el("li", {}, el("div", {},
+      "Set ", el("span", { class: "path" }, "IP Address Settings"), " to ", el("span", { class: "path" }, "Manual"), ". Pick any address on your network that nothing else uses, then enter:",
+      el("div", { class: "values" },
+        valueRow("Subnet Mask", s.subnet_mask || "255.255.255.0"),
+        valueRow("Default Gateway", s.console_ip)))));
+  }
+  steps.append(
+    el("li", {}, el("div", {},
+      "Set ", el("span", { class: "path" }, "DNS Settings"), " to ", el("span", { class: "path" }, "Manual"), " and enter:",
+      el("div", { class: "values" },
+        valueRow("Primary DNS", s.console_ip),
+        valueRow("Secondary DNS", s.console_ip)))),
+    el("li", {}, el("div", {}, "Press ", el("span", { class: "path" }, "OK"), " and start your game.")));
+
+  box.append(head, steps, el("p", { class: "note" },
+    gw ? "When you stop psxroute, set IP Address and DNS back to Automatic on the PS5, or it won't get online."
+       : "When this computer is off or psxroute isn't running, set DNS back to Automatic on the PS5, or it won't get online."));
+}
+
+function renderStatus(s) {
+  const st = $("status");
+  const dot = el("i", { class: "dot" });
+  let text;
+  if (s.console.connected) { dot.className = "dot ok"; text = `PS5 connected · ${s.console.ip}`; }
+  else if (s.console.seen) { dot.className = "dot warn"; text = `PS5 last seen ${s.console.last_seen}`; }
+  else { text = "Waiting for your PS5"; }
+  st.replaceChildren(dot, el("span", {}, text));
+  $("mode").textContent = s.mode === "gateway" ? "Gateway mode" : "Relay mode";
+}
+
+function plural(n, one, many) { return `${n} ${n === 1 ? one : many}`; }
+
+function groupRow(g, kind) {
+  const key = kind + ":" + g.name;
+  const isOpen = open.has(key);
+  const meta = el("div", { class: "meta" });
+  if (g.open > 0) meta.append(el("span", { class: "live" }, plural(g.open, "connection open", "connections open")));
+  if (kind === "routed" && g.conns > 0 && g.data !== "0 B") meta.append(el("span", {}, g.data));
+  if (kind === "routed" && state.mode === "gateway") {
+    const addrs = g.hosts.reduce((n, h) => n + (h.addrs ? h.addrs.length : 0), 0);
+    if (addrs) meta.append(el("span", {}, plural(addrs, "address", "addresses")));
+  }
+  meta.append(el("span", {}, plural(g.hosts.length, "name", "names")));
+  if (g.last_seen) meta.append(el("span", {}, g.last_seen));
+
+  const title = el("div", { class: "title" }, g.name,
+    g.label ? el("span", { class: "label" }, " · " + g.label) : null,
+    g.source_label ? el("span", { class: "tag" }, g.source_label) : null);
+
+  const toggle = el("button", { class: "toggle", type: "button", "data-focus": "t:" + key, "aria-expanded": String(isOpen), onclick: () => {
+    open.has(key) ? open.delete(key) : open.add(key);
+    render();
+  } }, chev(), el("div", { style: "min-width:0" }, title, meta));
+
+  let action = null;
+  if (kind === "other") {
+    action = el("button", { class: "btn primary small", type: "button", "data-focus": "a:" + key, disabled: busy.has(g.route_domain),
+      onclick: () => route(g.route_domain) }, "Route");
+  } else if (g.removable) {
+    action = el("button", { class: "btn small", type: "button", "data-focus": "a:" + key, disabled: busy.has(g.route_domain),
+      onclick: () => unroute(g.route_domain) }, "Stop routing");
+  }
+
+  const names = el("ul", { class: "names" }, g.hosts.map((h) => {
+    const bits = [];
+    if (h.open) bits.push(`${h.open} open`);
+    if (kind === "routed" && h.data !== "0 B") bits.push(h.data);
+    if (h.addrs && h.addrs.length) bits.push(h.addrs.join(", "));
+    bits.push(h.last_seen);
+    return el("li", {},
+      el("span", { class: "n" }, h.name, h.problem ? el("span", { class: "p" }, h.problem) : null),
+      el("span", { class: "m" }, bits.filter(Boolean).join(" · ")));
+  }));
+
+  return el("div", { class: "row" + (isOpen ? " open" : "") },
+    el("div", { class: "row-head" }, toggle, action),
+    g.problem && kind === "routed" ? el("div", { class: "problem" }, g.problem) : null,
+    names);
+}
+
+function renderRouted(s) {
+  const box = $("routed");
+  if (!s.routed.length) {
+    box.replaceChildren(el("div", { class: "empty" },
+      el("strong", {}, "Nothing has gone through the VPN yet"),
+      s.console.seen ? "Open a game that uses a routed service, such as an EA or Call of Duty title."
+                     : "Set up your PS5 first, then open a game."));
+    return;
+  }
+  box.replaceChildren(...s.routed.map((g) => groupRow(g, "routed")));
+}
+
+function renderOther(s) {
+  const box = $("other");
+  const q = $("q").value.trim().toLowerCase();
+  let list = s.other;
+  if (q) list = list.filter((g) => g.name.includes(q) || (g.label || "").toLowerCase().includes(q) || g.hosts.some((h) => h.name.includes(q)));
+  if (!list.length) {
+    box.replaceChildren(el("div", { class: "empty" },
+      q ? el("strong", {}, `Nothing matches “${q}”`) : el("strong", {}, "Nothing yet"),
+      q ? "" : "Names appear here as the PS5 looks them up."));
+    return;
+  }
+  const limit = showAllOther || q ? list.length : 25;
+  const rows = list.slice(0, limit).map((g) => groupRow(g, "other"));
+  if (list.length > limit) {
+    rows.push(el("button", { class: "btn more", type: "button", onclick: () => { showAllOther = true; render(); } },
+      `Show all ${list.length}`));
+  }
+  box.replaceChildren(...rows);
+}
+
+function renderRules(s) {
+  $("rules-count").textContent = s.domains.length;
+  $("rules").replaceChildren(...s.domains.map((d) => el("li", {},
+    el("span", { class: "d" }, d.domain),
+    el("span", { class: "s" }, d.source_label),
+    d.removable ? el("button", { class: "btn small", type: "button", disabled: busy.has(d.domain), onclick: () => unroute(d.domain) }, "Remove") : null)));
+}
+
+function renderTiles(s) {
+  $("t-sites").textContent = s.totals.routed_sites;
+  $("t-open").textContent = s.totals.open;
+  if (s.mode === "gateway") {
+    $("t-data-k").textContent = "Addresses routed";
+    $("t-data").textContent = s.route_all ? "All" : s.totals.addresses;
+  } else {
+    $("t-data").textContent = s.totals.data;
+  }
+  $("t-exit").textContent = s.exit_label;
+  $("version").textContent = "psxroute " + s.version;
+}
+
+let coverBusy = false;
+function renderCover(s) {
+  const games = $("cover-games"), all = $("cover-all");
+  games.checked = !s.route_all;
+  all.checked = s.route_all;
+  all.disabled = !s.can_route_all || coverBusy;
+  games.disabled = coverBusy;
+  const hint = $("cover-hint");
+  hint.replaceChildren();
+  if (!s.can_route_all) {
+    hint.append("“Everything” needs gateway mode, which routes all traffic, games' voice and multiplayer included. Restart psxroute with ",
+      el("code", {}, "sudo psxroute --mode gateway"), ".");
+  } else if (s.route_all) {
+    hint.append("Everything from the PS5 is going through your VPN. PSN downloads will be slower.");
+  }
+}
+
+async function setCover(on) {
+  coverBusy = true; render();
+  try {
+    await post("/api/route-all", { on });
+    toast(on ? "Everything now goes through your VPN. Restart the game so it reconnects." : "Only game services go through your VPN now.");
+  } catch (e) { toast(e.message); }
+  coverBusy = false;
+  lastText = "";
+  await refresh();
+}
+
+$("cover-games").addEventListener("change", (e) => { if (e.target.checked) setCover(false); });
+$("cover-all").addEventListener("change", (e) => { if (e.target.checked) setCover(true); });
+
+function render() {
+  if (!state) return;
+  // Redrawing replaces the buttons, so put keyboard focus back where it was.
+  const focused = document.activeElement && document.activeElement.dataset ? document.activeElement.dataset.focus : null;
+  renderStatus(state);
+  renderSetup(state);
+  renderCover(state);
+  renderTiles(state);
+  renderRouted(state);
+  renderOther(state);
+  renderRules(state);
+  if (focused) {
+    const again = document.querySelector(`[data-focus="${CSS.escape(focused)}"]`);
+    if (again) again.focus({ preventScroll: true });
+  }
+}
+
+async function refresh() {
+  try {
+    const r = await fetch("/api/state", { cache: "no-store" });
+    if (!r.ok) throw new Error(r.status);
+    const text = await r.text();
+    failures = 0;
+    $("offline").classList.remove("show");
+    if (text === lastText) return; // nothing changed: leave the page alone
+    lastText = text;
+    state = JSON.parse(text);
+    render();
+  } catch (_) {
+    if (++failures >= 2) $("offline").classList.add("show");
+  }
+}
+
+async function post(path, body) {
+  const r = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.error || "Something went wrong");
+  return data;
+}
+
+async function route(domain) {
+  busy.add(domain); render();
+  try {
+    await post("/api/route", { domain });
+    toast(`${domain} now goes through your VPN. Restart the game to use it.`);
+  } catch (e) { toast(e.message); }
+  busy.delete(domain);
+  lastText = "";
+  await refresh();
+}
+
+async function unroute(domain) {
+  busy.add(domain); render();
+  try {
+    await post("/api/unroute", { domain });
+    toast(`${domain} goes direct again.`);
+  } catch (e) { toast(e.message); }
+  busy.delete(domain);
+  lastText = "";
+  await refresh();
+}
+
+$("add-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const input = $("add-domain");
+  const d = input.value.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*$/, "");
+  if (!d) return;
+  await route(d);
+  input.value = "";
+});
+
+$("q").addEventListener("input", () => state && renderOther(state));
+
+$("clear").addEventListener("click", async () => {
+  try { await post("/api/clear"); toast("History cleared. Routing rules are unchanged."); } catch (e) { toast(e.message); }
+  open.clear();
+  await refresh();
+});
+
+// ---- Connection monitor: polled every second and drawn on its own, so the
+// rest of the page isn't rebuilt.
+const SVGNS = "http://www.w3.org/2000/svg";
+function svg(tag, attrs) {
+  const n = document.createElementNS(SVGNS, tag);
+  for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+  return n;
+}
+function msText(v) { return v >= 100 ? Math.round(v).toString() : (Math.round(v * 10) / 10).toString(); }
+function pct(v) { return v === 0 ? "0" : v < 1 ? v.toFixed(1) : Math.round(v).toString(); }
+
+// Rough guide for online play.
+function grade(kind, v) {
+  if (v == null) return "";
+  const [fair, poor] = { ping: [80, 150], jitter: [15, 40], loss: [1, 5], home: [20, 40] }[kind];
+  return v >= poor ? "poor" : v >= fair ? "fair" : "good";
+}
+
+function tile(label, value, unit, sub, cls) {
+  return el("div", { class: "mt " + (cls || "") },
+    el("div", { class: "k" }, label),
+    el("div", { class: "v" }, value, unit && value !== "–" ? el("small", {}, unit) : null),
+    el("div", { class: "s", title: sub || "" }, sub || " "));
+}
+
+function connLabel(c) { return c.name || c.remote; }
+
+const CW = 300, CH = 72;
+function chart(m) {
+  const n = m.ping_hist.length;
+  const step = CW / (n - 1);
+  const vals = m.ping_hist.concat(m.jitter_hist).filter((v) => v >= 0);
+  const max = Math.max(60, ...vals) * 1.15;
+  const y = (v) => (CH - 2 - (Math.min(v, max) / max) * (CH - 8)).toFixed(1);
+  const path = (hist, cls) => {
+    let d = "", on = false;
+    hist.forEach((v, i) => {
+      if (v < 0) { on = false; return; }
+      d += (on ? "L" : "M") + (i * step).toFixed(1) + " " + y(v);
+      on = true;
+    });
+    return d ? svg("path", { d, class: cls }) : null;
+  };
+  const s = svg("svg", { viewBox: `0 0 ${CW} ${CH}`, preserveAspectRatio: "none", role: "img", "aria-label": "Ping, jitter and loss over the last minute" });
+  s.append(svg("line", { x1: 0, x2: CW, y1: CH - 0.5, y2: CH - 0.5, class: "grid" }),
+           svg("line", { x1: 0, x2: CW, y1: y(max / 1.15 / 2), y2: y(max / 1.15 / 2), class: "grid", "stroke-dasharray": "3 4" }));
+  m.loss_hist.forEach((v, i) => { if (v > 0) s.append(svg("rect", { x: i * step - 2, y: CH - 10, width: 4, height: 10, class: "lost" })); });
+  const p = path(m.ping_hist, "l-ping"); if (p) s.append(p);
+  const j = path(m.jitter_hist, "l-jit"); if (j) s.append(j);
+  const legend = el("div", { class: "legend" },
+    m.ping ? el("span", {}, el("i", { style: "background:var(--accent)" }), "Ping") : null,
+    m.match ? el("span", {}, el("i", { style: "background:var(--warn)" }), "Match jitter") : null,
+    el("span", {}, el("i", { style: "background:var(--danger);height:8px;width:4px" }), "Packets lost or sent again"),
+    el("span", {}, `Last minute · top of chart ${Math.round(max / 1.15)} ms`));
+  return el("div", { class: "chart" }, s, legend);
+}
+
+function renderMonitor(m) {
+  const box = $("mon"), q = $("m-quality");
+  const message = (strong, text) => {
+    q.className = "quality"; q.textContent = "";
+    box.replaceChildren(el("div", { class: "empty" }, el("strong", {}, strong), text));
+  };
+  if (!m.available) {
+    const p = el("p", { class: "hint" }, "In relay mode the PS5's traffic doesn't pass through this computer, so there's nothing to watch. Restart psxroute with ",
+      el("code", {}, "sudo psxroute --mode gateway"), " to use the monitor.");
+    q.className = "quality"; q.textContent = "";
+    box.replaceChildren(el("div", { class: "empty" }, el("strong", {}, "Needs gateway mode")), p);
+    return;
+  }
+  if (m.problem) return message("The monitor isn't running", m.problem);
+  if (!m.running) return message("Starting…", "");
+  if (!m.console || !m.conns.length) return message("Waiting for your PS5's traffic", "Start a game and its connections appear here.");
+
+  const ping = m.ping, match = m.match;
+  const jitter = match ? match.jitter_ms : ping && ping.has_ping ? ping.jitter_ms : null;
+  let loss = null, lossFrom = "";
+  if (match && match.has_loss) { loss = match.loss_pct; lossFrom = "estimated, match traffic"; }
+  else if (ping && ping.has_loss) { loss = ping.loss_pct; lossFrom = "resent, " + connLabel(ping); }
+
+  const tiles = el("div", { class: "mon-tiles" },
+    tile("Ping", ping ? msText(ping.ping_ms) : "–", "ms",
+      ping ? "to " + connLabel(ping) : match ? "Match traffic has no replies to time" : "No TCP replies to time yet",
+      ping ? grade("ping", ping.ping_ms) : ""),
+    tile("Jitter", jitter != null ? msText(jitter) : "–", "ms",
+      match ? "match traffic" : ping ? "ping variation" : "", jitter != null ? grade("jitter", jitter) : ""),
+    tile("Packet loss", loss != null ? pct(loss) : "–", "%", loss != null ? lossFrom : "Not enough packets yet", loss != null ? grade("loss", loss) : ""),
+    tile("Home network", m.has_home ? msText(m.home_ms) : "–", "ms", "this computer ↔ PS5", m.has_home ? grade("home", m.home_ms) : ""));
+
+  const parts = [tiles];
+  if (match) {
+    parts.push(el("div", { class: "match" },
+      el("span", {}, "Match traffic with ", el("b", {}, connLabel(match)), match.vpn ? el("span", { class: "route vpn" }, "VPN") : el("span", { class: "route" }, "Direct")),
+      el("span", {}, el("b", {}, Math.round(match.in_rate)), " packets/s in · ", el("b", {}, Math.round(match.out_rate)), " out"),
+      el("span", {}, "Longest gap ", el("b", {}, `${msText(match.max_gap_ms)} ms`))));
+  }
+  parts.push(chart(m));
+
+  const list = el("ul", { class: "conns", "aria-label": "Connections" }, m.conns.map((c) => {
+    const figs = [];
+    if (c.has_ping) figs.push(el("span", {}, "Ping ", el("b", {}, msText(c.ping_ms) + " ms")));
+    if (c.has_ping || c.proto === "UDP") figs.push(el("span", {}, "Jitter ", el("b", {}, msText(c.jitter_ms) + " ms")));
+    if (c.has_loss) figs.push(el("span", {}, "Loss ", el("b", {}, pct(c.loss_pct) + "%")));
+    figs.push(el("span", {}, el("b", {}, Math.round(c.in_rate + c.out_rate)), " pkt/s"));
+    return el("li", {},
+      el("div", {}, el("span", { class: "n" }, connLabel(c)),
+        el("span", { class: "route" + (c.vpn ? " vpn" : "") }, c.vpn ? "VPN" : "Direct"),
+        el("div", { class: "a" }, `${c.proto} ${c.remote}`)),
+      el("div", { class: "f" }, figs));
+  }));
+  parts.push(el("p", { class: "hint" }, `${plural(m.active, "connection", "connections")} from ${m.console} in the last 15 seconds. Ping is measured on TCP connections; match traffic is UDP, which has no replies to time, so it shows jitter and gaps instead.`), list);
+  box.replaceChildren(...parts);
+
+  // Overall verdict from what's known.
+  const grades = [ping && grade("ping", ping.ping_ms), jitter != null && grade("jitter", jitter), loss != null && grade("loss", loss)].filter(Boolean);
+  const worst = grades.includes("poor") ? "poor" : grades.includes("fair") ? "fair" : grades.length ? "good" : "";
+  q.className = "quality" + (worst ? " " + worst : "");
+  q.textContent = { good: "Good for online play", fair: "Fair", poor: "Poor for online play" }[worst] || "";
+}
+
+async function refreshMonitor() {
+  try {
+    const r = await fetch("/api/monitor", { cache: "no-store" });
+    if (r.ok) renderMonitor(await r.json());
+  } catch (_) {}
+}
+refreshMonitor();
+setInterval(() => { if (!document.hidden) refreshMonitor(); }, 1000);
+
+refresh();
+setInterval(() => { if (!document.hidden) refresh(); }, 2000);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) { refresh(); refreshMonitor(); } });
+</script>
+</body>
+</html>

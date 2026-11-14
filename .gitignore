@@ -1,0 +1,37 @@
+# Binaries
+/psxroute
+/cmd/psxroute/psxroute
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test artefacts
+*.test
+*.out
+coverage.*
+/.testbin/
+
+# Go workspace
+go.work
+go.work.sum
+
+# Vendor
+/vendor/
+
+# Build / release artefacts
+/dist/
+/bin/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+/config.local.yaml

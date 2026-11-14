@@ -1,0 +1,12 @@
+# Activision titles (Call of Duty).
+#
+# Unverified starting point. activision.com and callofduty.com are the
+# account and web services; demonware.net is Activision's online backend.
+# Check with the dashboard's learning view while playing and add what you find
+# to `hosts:` in your config, or send a pull request here.
+name: activision
+description: Activision account and Call of Duty online services
+hosts:
+  - activision.com
+  - callofduty.com
+  - demonware.net

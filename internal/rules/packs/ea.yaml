@@ -1,0 +1,11 @@
+# EA titles (EA SPORTS FC, Battlefield, Apex Legends, …).
+#
+# Unverified starting point. These are EA's own top-level domains; which ones
+# a given game's 403 comes from hasn't been checked on a console yet. Use the
+# dashboard's learning view while playing and add what you find to `hosts:`
+# in your config, or send a pull request here.
+name: ea
+description: EA account, matchmaking and game services
+hosts:
+  - ea.com
+  - origin.com
