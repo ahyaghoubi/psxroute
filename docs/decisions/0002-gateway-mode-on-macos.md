@@ -1,6 +1,6 @@
 # ADR 0002: Gateway mode on macOS through the VPN's own tunnel
 
-- Status: Accepted; routing superseded by [ADR 0003](0003-routes-not-route-to.md)
+- Status: Accepted; routing superseded by [ADR 0003](0003-routes-not-route-to.md); Windows follows in [ADR 0004](0004-gateway-mode-on-windows.md)
 - Date: 13/11/2026
 - Deciders: project owner
 - Builds on: [ADR 0001](0001-dns-and-sni-first.md)

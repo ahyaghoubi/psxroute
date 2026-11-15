@@ -87,7 +87,7 @@ func settings() Settings {
 
 func start(t *testing.T, f *fakeRunner, s Settings) *Gateway {
 	t.Helper()
-	g, err := Start(context.Background(), s, f, slog.New(slog.DiscardHandler))
+	g, err := Start(context.Background(), s, PF(f), slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,8 +145,8 @@ func TestStartAddClose(t *testing.T) {
 			t.Errorf("Start didn't run %q; ran %v", want, f.calls)
 		}
 	}
-	if g.token != "1234567" {
-		t.Fatalf("token = %q", g.token)
+	if tok := g.sys.(*pfSystem).token; tok != "1234567" {
+		t.Fatalf("token = %q", tok)
 	}
 
 	ips := []net.IP{net.ParseIP("198.51.100.7"), net.ParseIP("198.51.100.7"), net.ParseIP("192.168.1.9"), net.ParseIP("2001:db8::1"), net.ParseIP("224.0.0.251")}
@@ -202,7 +202,7 @@ func TestExistingRouteIsLeftAlone(t *testing.T) {
 func TestStartFailureUndoes(t *testing.T) {
 	useStateDir(t)
 	f := &fakeRunner{fail: "pfctl -a com.apple/psxroute -f"}
-	if _, err := Start(context.Background(), settings(), f, slog.New(slog.DiscardHandler)); err == nil {
+	if _, err := Start(context.Background(), settings(), PF(f), slog.New(slog.DiscardHandler)); err == nil {
 		t.Fatal("want error")
 	}
 	if !f.has("sysctl -w net.inet.ip.forwarding=0") {
@@ -247,7 +247,7 @@ func TestCleanupRemovesListedRoutes(t *testing.T) {
 		t.Fatal(err)
 	}
 	f := &fakeRunner{}
-	if err := Cleanup(context.Background(), f); err != nil {
+	if err := Cleanup(context.Background(), PF(f)); err != nil {
 		t.Fatal(err)
 	}
 	for _, want := range []string{"route -n delete -net 0.0.0.0/1", "route -n delete -host 198.51.100.7", "pfctl -a com.apple/psxroute -F all", "sysctl -w net.inet.ip.forwarding=0"} {
@@ -273,7 +273,7 @@ func TestDiscover(t *testing.T) {
 		{Name: "utun0", Up: true, MTU: 1380, Addrs: []*net.IPNet{ipnet("fe80::1/64")}}, // system utun, IPv6 only
 		{Name: "utun4", Up: true, MTU: 1400, Addrs: []*net.IPNet{ipnet("10.8.0.2/32")}},
 	}
-	s, err := Discover(context.Background(), &fakeRunner{}, ifaces, "192.168.1.20", "auto")
+	s, err := Discover(context.Background(), PF(&fakeRunner{}), ifaces, "192.168.1.20", "auto")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -285,16 +285,16 @@ func TestDiscover(t *testing.T) {
 	}
 
 	two := append(ifaces, Iface{Name: "utun7", Up: true, Addrs: []*net.IPNet{ipnet("10.9.0.2/32")}})
-	if _, err := Discover(context.Background(), &fakeRunner{}, two, "192.168.1.20", "auto"); err == nil || !strings.Contains(err.Error(), "utun4, utun7") {
+	if _, err := Discover(context.Background(), PF(&fakeRunner{}), two, "192.168.1.20", "auto"); err == nil || !strings.Contains(err.Error(), "utun4, utun7") {
 		t.Fatalf("want ambiguity error, got %v", err)
 	}
-	if s, err := Discover(context.Background(), &fakeRunner{}, two, "192.168.1.20", "utun7"); err != nil || s.Tunnel != "utun7" {
+	if s, err := Discover(context.Background(), PF(&fakeRunner{}), two, "192.168.1.20", "utun7"); err != nil || s.Tunnel != "utun7" {
 		t.Fatalf("explicit tunnel: %+v, %v", s, err)
 	}
-	if _, err := Discover(context.Background(), &fakeRunner{}, ifaces[:2], "192.168.1.20", "auto"); err == nil {
+	if _, err := Discover(context.Background(), PF(&fakeRunner{}), ifaces[:2], "192.168.1.20", "auto"); err == nil {
 		t.Fatal("want error with no tunnel")
 	}
-	if _, err := Discover(context.Background(), &fakeRunner{}, ifaces, "192.168.9.9", "auto"); err == nil {
+	if _, err := Discover(context.Background(), PF(&fakeRunner{}), ifaces, "192.168.9.9", "auto"); err == nil {
 		t.Fatal("want error for an address no interface has")
 	}
 }

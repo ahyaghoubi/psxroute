@@ -8,7 +8,7 @@ import (
 	"net"
 )
 
-// Capture is only implemented on macOS, alongside gateway mode.
+// Capture is only implemented on macOS so far.
 func Capture(context.Context, string, net.IP, *Monitor) error {
-	return errors.New("the connection monitor needs gateway mode, which is macOS only so far")
+	return errors.New("the connection monitor only works on macOS so far; routing works without it")
 }

@@ -26,8 +26,8 @@ your IP's region. It has two modes:
 | --- | --- | --- |
 | Console setting | DNS only | Gateway and DNS |
 | Carries | HTTPS and HTTP to routed names | All traffic to routed names' addresses, UDP included, plus fixed ranges, or everything |
-| Exit | VPN client's SOCKS5/HTTP port, or the PC's own route | The VPN's tunnel interface (`utun…`) |
-| Runs on | macOS, Windows, Linux, no admin rights | macOS, with `sudo` |
+| Exit | VPN client's SOCKS5/HTTP port, or the PC's own route | The VPN's tunnel interface (`utun…` on macOS, its adapter on Windows) |
+| Runs on | macOS, Windows, Linux, no admin rights | macOS with `sudo`, Windows as Administrator |
 | NAT type on the console | Unchanged | Usually Strict |
 
 Start with relay mode. Use gateway mode when a game still fails with its names
@@ -57,7 +57,7 @@ Sister project of [psxdownloadhelper](https://github.com/ahyaghoubi/psxdownloadh
   It folds away once the console connects.
 - **Status:** whether the PS5 is connected, how many services are going
   through the VPN, open connections and data used.
-- **Connection monitor** (gateway mode): ping, jitter and packet loss on
+- **Connection monitor** (gateway mode on macOS): ping, jitter and packet loss on
   the PS5's own connections, a one-minute graph, and every connection with
   whether it goes through the VPN. It only reads the headers of packets the
   Mac is already forwarding and never sends anything itself.
@@ -67,6 +67,7 @@ Sister project of [psxdownloadhelper](https://github.com/ahyaghoubi/psxdownloadh
     (how unevenly the server's packets arrive) and loss estimated from gaps
     in its steady stream.
   - Relay mode can't show it: the PS5's traffic doesn't pass through the PC.
+    Gateway mode on Windows doesn't have it yet.
 - **What goes through your VPN:** *Game services only* (recommended) or
   *Everything*. Everything needs gateway mode, and is the quickest way to test
   whether a full VPN fixes a game. It lasts until psxroute restarts; set
@@ -85,7 +86,11 @@ internet.
 
 ---
 
-## Gateway mode (macOS)
+## Gateway mode
+
+The computer becomes the console's router. It works on macOS and Windows.
+
+### macOS
 
 The Mac becomes the console's router. Routed addresses get routes through
 the VPN's tunnel; everything else follows the Mac's own default route, and pf
@@ -131,6 +136,40 @@ on.
 If psxroute is killed before it can clean up (a crash, `kill -9`, a power
 cut), run `sudo psxroute cleanup`. A restart also clears it: macOS doesn't
 keep the routes or rules.
+
+### Windows
+
+Windows forwards the console's traffic, routed addresses get routes through
+the VPN's adapter, and WinNAT (Windows' built-in NAT) gives the console's
+traffic the tunnel's address. Everything else goes back out to your router,
+which answers the console directly. As on macOS, use a **split tunnel** VPN.
+
+1. **Connect your VPN** in a mode that creates an adapter: WireGuard,
+   OpenVPN, or a v2ray-style client's TUN mode. psxroute recognises Wintun,
+   WireGuard, TAP-Windows and OpenVPN adapters, and others with "VPN" or
+   "tunnel" in their description. If it finds none or several, set
+   `gateway.tunnel` to the adapter's name as `Get-NetAdapter` shows it, for
+   example `gateway.tunnel: ProtonVPN`.
+2. **Open a terminal as Administrator** and run
+   `psxroute --mode gateway`. Allow it through Windows Firewall when asked.
+3. **On the PS5:** the same settings as on macOS, with this PC's address as
+   Default Gateway and DNS.
+4. **Stop with Ctrl+C.** The routes and the NAT are removed and forwarding is
+   switched back off where psxroute switched it on.
+
+Good to know on Windows:
+
+- **WinNAT has to be available.** It's part of Windows' Hyper-V and
+  container networking; `Get-Command New-NetNat` shows whether it's there.
+  If it's missing, or another program (Docker, say) already has the one
+  WinNAT that Windows allows, psxroute says so and changes nothing.
+- **After a crash**, run `psxroute cleanup` from an Administrator terminal.
+  A restart removes the routes and the forwarding setting, but not the NAT;
+  psxroute also clears it the next time it starts.
+- **No TCP MSS clamping.** Windows' NAT doesn't clamp, so full-size packets
+  rely on Path MTU Discovery through the tunnel.
+- **Not yet tried with a real console and VPN.** See the
+  [roadmap](docs/roadmap.md).
 
 ---
 
@@ -188,7 +227,10 @@ Flags override the file: `--mode`, `--exit`, `--advertise`, `--log-level`,
 ## Good to know
 
 - **Ports 53, 80 and 443.** macOS and Windows let a normal user listen on
-  them. On Linux, run
+  them. On Windows, allow psxroute through Windows Firewall when it asks,
+  on the network type your home network uses (Private, usually). Internet
+  Connection Sharing also uses port 53; switch it off if psxroute says the
+  port is in use. On Linux, run
   `sudo setcap cap_net_bind_service=+ep ./psxroute` once. If another program
   already uses a port (a local DNS server, a web server), psxroute says
   which.
@@ -207,7 +249,7 @@ Flags override the file: `--mode`, `--exit`, `--advertise`, `--log-level`,
   needs gateway mode.
 - **Servers reached by IP address** never touch DNS. In gateway mode, list
   their ranges in `gateway.cidrs` or use `route_all`.
-- **Gateway mode is macOS only** for now. Linux and Windows are on the
+- **Gateway mode is macOS and Windows only** for now. Linux is on the
   [roadmap](docs/roadmap.md).
 - **IPv6 isn't routed.** Routed names get no IPv6 answer, so the console uses
   IPv4 for them.

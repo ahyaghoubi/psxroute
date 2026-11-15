@@ -1,7 +1,8 @@
 # Architecture
 
 One binary, no state on disk. Relay mode is described first; gateway mode
-reuses the DNS server and dashboard and replaces the relay with pf rules.
+reuses the DNS server and dashboard and replaces the relay with routes and
+NAT: pf on macOS, WinNAT on Windows.
 
 ```
                  ┌───────────────────────── psxroute ─────────────────────────┐
@@ -28,7 +29,7 @@ reuses the DNS server and dashboard and replaces the relay with pf rules.
 | `internal/exit` | `direct` (own resolver on `upstream_dns`), SOCKS5 (`golang.org/x/net/proxy`), HTTP CONNECT. |
 | `internal/learn` | In-memory record of names, lookups, connections, bytes and errors. Capped at 5,000 names. |
 | `internal/dashboard` | One embedded page (vanilla JS) polling `/api/state` every 2 s; `POST /api/route`, `/api/unroute`, `/api/route-all`, `/api/clear` (JSON only, so other sites can't trigger them with a form); `hosts.txt` and `hosts.json` exports. |
-| `internal/gateway` | Gateway mode: finds the LAN and tunnel, renders and loads the pf anchor, adds addresses to its table, undoes everything on close. |
+| `internal/gateway` | Gateway mode: finds the LAN and tunnel, adds a route for each routed address, undoes everything on close. A `System` does the OS's part: `pf.go` (route, sysctl, pf anchor) on macOS, `windows.go` (IP Helper API, netsh, WinNAT) on Windows. |
 | `internal/app` | Wires the listeners; tests start it on loopback ports. |
 
 ## Design rules
@@ -76,3 +77,33 @@ reuses the DNS server and dashboard and replaces the relay with pf rules.
   crash.
 - The generated rules are checked against macOS's own parser in the tests
   (`pfctl -n`, no root needed).
+
+## Gateway mode (Windows)
+
+```
+ console ──(gateway = PC)──► Ethernet ── forwarding, routing table
+                                         │
+                                         ├─ host route via the VPN adapter ─► WinNAT ─► VPN
+                                         └─ default route, back out Ethernet ─────────► router
+```
+
+See [ADR 0004](decisions/0004-gateway-mode-on-windows.md).
+
+- **Routes go in through the IP Helper API** (`CreateIpForwardEntry2`), not
+  `route.exe` or `netsh`: no process per DNS answer, and "already exists"
+  and "not found" come back as error codes rather than localised text. Routes
+  added this way are in the active store only, so a reboot removes them.
+- **The next hop** is on-link for Wintun and other point-to-point adapters,
+  or the gateway the VPN already routes through on a TAP adapter.
+- **Forwarding** is switched on per interface (LAN and tunnel) with
+  `netsh … store=active`, and only where it was off.
+- **WinNAT** (`New-NetNat`) with the LAN's prefix as its internal network.
+  The LAN interface is then internal, the tunnel external: routed traffic is
+  NATed to the tunnel's address and traffic that isn't routed goes back out
+  to the router untouched.
+- **Undo** removes the routes psxroute added, the NAT, and the forwarding it
+  switched on. All three are listed in `%ProgramData%\psxroute\gateway.json`
+  for `psxroute cleanup`.
+- **Tests** run the logic against a fake IP Helper and command runner on any
+  OS; one Windows-only test adds and removes a real route on CI's elevated
+  runner.

@@ -526,7 +526,7 @@ function renderCover(s) {
   hint.replaceChildren();
   if (!s.can_route_all) {
     hint.append("“Everything” needs gateway mode, which routes all traffic, games' voice and multiplayer included. Restart psxroute with ",
-      el("code", {}, "sudo psxroute --mode gateway"), ".");
+      el("code", {}, s.gateway_command || "sudo psxroute --mode gateway"), ".");
   } else if (s.route_all) {
     hint.append("Everything from the PS5 is going through your VPN. PSN downloads will be slower.");
   }
@@ -690,7 +690,7 @@ function renderMonitor(m) {
   };
   if (!m.available) {
     const p = el("p", { class: "hint" }, "In relay mode the PS5's traffic doesn't pass through this computer, so there's nothing to watch. Restart psxroute with ",
-      el("code", {}, "sudo psxroute --mode gateway"), " to use the monitor.");
+      el("code", {}, (state && state.gateway_command) || "sudo psxroute --mode gateway"), " to use the monitor.");
     q.className = "quality"; q.textContent = "";
     box.replaceChildren(el("div", { class: "empty" }, el("strong", {}, "Needs gateway mode")), p);
     return;

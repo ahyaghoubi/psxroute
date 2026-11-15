@@ -286,7 +286,7 @@ func TestGatewayModeRoutesResolvedAddresses(t *testing.T) {
 	run := &recRunner{}
 	ctx, cancel := context.WithCancel(context.Background())
 	a, err := Start(ctx, cfg, Options{
-		Version: "test", SkipPreflight: true, GatewayRunner: run,
+		Version: "test", SkipPreflight: true, GatewaySystem: gateway.PF(run),
 		GatewayInterfaces: []gateway.Iface{
 			{Name: "en0", Up: true, MTU: 1500, Addrs: []*net.IPNet{lan}},
 			{Name: "utun4", Up: true, MTU: 1400, Addrs: []*net.IPNet{tun}},

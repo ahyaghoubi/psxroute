@@ -19,8 +19,12 @@ func IPv4Addrs() ([]Addr, error) {
 	if err != nil {
 		return nil, err
 	}
+	vpn := vpnAdapters()
 	var out []Addr
 	for _, iface := range ifaces {
+		if vpn[iface.Name] {
+			continue
+		}
 		// Point-to-point links (VPN tunnels) are never on the console's LAN.
 		if iface.Flags&net.FlagLoopback != 0 || iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagPointToPoint != 0 {
 			continue

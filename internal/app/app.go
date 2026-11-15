@@ -39,9 +39,9 @@ type Options struct {
 	// loaded from at start. Empty means they last until psxroute stops.
 	RoutesPath string
 
-	// Gateway mode: tests swap in a fake command runner and interface list,
-	// and skip the macOS and root checks.
-	GatewayRunner     gateway.Runner
+	// Gateway mode: tests swap in a fake system and interface list, and
+	// skip the platform and administrator checks.
+	GatewaySystem     gateway.System
 	GatewayInterfaces []gateway.Iface
 	SkipPreflight     bool
 }
@@ -121,9 +121,11 @@ func Start(ctx context.Context, cfg *config.Config, opt Options) (*App, error) {
 				return nil, err
 			}
 		}
-		run := opt.GatewayRunner
-		if run == nil {
-			run = gateway.ExecRunner{}
+		sys := opt.GatewaySystem
+		if sys == nil {
+			if sys, err = gateway.NewSystem(gateway.ExecRunner{}); err != nil {
+				return nil, err
+			}
 		}
 		ifaces := opt.GatewayInterfaces
 		if ifaces == nil {
@@ -131,12 +133,12 @@ func Start(ctx context.Context, cfg *config.Config, opt Options) (*App, error) {
 				return nil, err
 			}
 		}
-		gs, err := gateway.Discover(ctx, run, ifaces, advertise, cfg.Gateway.Tunnel)
+		gs, err := gateway.Discover(ctx, sys, ifaces, advertise, cfg.Gateway.Tunnel)
 		if err != nil {
 			return nil, err
 		}
 		gs.RouteAll, gs.CIDRs = cfg.Gateway.RouteAll, cfg.Gateway.CIDRs
-		gw, err := gateway.Start(ctx, gs, run, log)
+		gw, err := gateway.Start(ctx, gs, sys, log)
 		if err != nil {
 			return nil, err
 		}
@@ -146,7 +148,7 @@ func Start(ctx context.Context, cfg *config.Config, opt Options) (*App, error) {
 		a.Monitor = monitor.New(gs.LANNet, gs.LANIP)
 		a.Monitor.ViaVPN = gw.ViaTunnel
 		if gs.DefaultIface == gs.Tunnel && !gs.RouteAll {
-			log.Warn("this Mac's default route is the VPN, so all console traffic goes through it; use a split tunnel to send only routed names")
+			log.Warn("this computer's default route is the VPN, so all console traffic goes through it; use a split tunnel to send only routed names")
 		}
 	}
 
@@ -259,7 +261,7 @@ func Start(ctx context.Context, cfg *config.Config, opt Options) (*App, error) {
 }
 
 func (a *App) dashboardInfo(cfg *config.Config, version string) dashboard.Info {
-	info := dashboard.Info{Version: version, Mode: cfg.Mode, ConsoleIP: a.Advertise, Exit: cfg.Exit}
+	info := dashboard.Info{Version: version, Mode: cfg.Mode, ConsoleIP: a.Advertise, Exit: cfg.Exit, GatewayCommand: gateway.Command()}
 	if a.Monitor != nil {
 		info.Monitor = a.Monitor
 	}

@@ -33,6 +33,8 @@ type Info struct {
 	Mode      string // relay or gateway
 	ConsoleIP string // this machine's LAN address: the console's DNS (and gateway)
 	Exit      string // exit URL, or "direct"
+	// GatewayCommand is how to start gateway mode on this computer.
+	GatewayCommand string
 
 	// Gateway mode only.
 	Tunnel string
@@ -139,13 +141,20 @@ func (h *Handler) change(w http.ResponseWriter, r *http.Request, fn func(string)
 	writeJSON(w, http.StatusOK, struct{}{})
 }
 
+func (h *Handler) gatewayCommand() string {
+	if h.info.GatewayCommand != "" {
+		return h.info.GatewayCommand
+	}
+	return "sudo psxroute --mode gateway"
+}
+
 func (h *Handler) routeAll(w http.ResponseWriter, r *http.Request) {
 	if !isJSON(r) {
 		writeJSON(w, http.StatusUnsupportedMediaType, apiError{"send JSON"})
 		return
 	}
 	if h.info.SetRouteAll == nil {
-		writeJSON(w, http.StatusConflict, apiError{"Sending everything through the VPN needs gateway mode. Restart psxroute with: sudo psxroute --mode gateway"})
+		writeJSON(w, http.StatusConflict, apiError{"Sending everything through the VPN needs gateway mode. Restart psxroute with: " + h.gatewayCommand()})
 		return
 	}
 	var body struct {
@@ -186,6 +195,8 @@ type State struct {
 	// CanRouteAll is false in relay mode, where the switch is unavailable.
 	CanRouteAll bool     `json:"can_route_all"`
 	CIDRs       []string `json:"cidrs,omitempty"`
+	// GatewayCommand is how to start gateway mode, for hints in relay mode.
+	GatewayCommand string `json:"gateway_command"`
 
 	Console Console `json:"console"`
 	Totals  Totals  `json:"totals"`
@@ -257,6 +268,7 @@ func (h *Handler) state() State {
 		Version: h.info.Version, Mode: h.info.Mode, ConsoleIP: h.info.ConsoleIP,
 		SubnetMask: h.info.SubnetMask, LANNet: h.info.LANNet,
 		CIDRs: h.info.CIDRs, CanRouteAll: h.info.SetRouteAll != nil,
+		GatewayCommand: h.gatewayCommand(),
 	}
 	if h.info.RouteAll != nil {
 		st.RouteAll = h.info.RouteAll()

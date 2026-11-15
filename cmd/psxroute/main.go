@@ -55,10 +55,14 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 			if err := gateway.Preflight(); err != nil {
 				return err
 			}
-			if err := gateway.Cleanup(ctx, gateway.ExecRunner{}); err != nil {
+			sys, err := gateway.NewSystem(gateway.ExecRunner{})
+			if err != nil {
 				return err
 			}
-			fmt.Fprintln(out, "Removed psxroute's routes and firewall rules and switched IP forwarding off.")
+			if err := gateway.Cleanup(ctx, sys); err != nil {
+				return err
+			}
+			fmt.Fprintln(out, "Removed psxroute's routes, firewall and NAT rules and switched IP forwarding off.")
 			return nil
 		}
 	}
@@ -66,7 +70,7 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 	fs := flag.NewFlagSet("psxroute", flag.ContinueOnError)
 	fs.SetOutput(out)
 	cfgPath := fs.String("config", "", "settings file (default "+config.DefaultPath()+")")
-	mode := fs.String("mode", "", "relay (default) or gateway (macOS, needs sudo)")
+	mode := fs.String("mode", "", "relay (default) or gateway (macOS with sudo, or Windows as Administrator)")
 	exitURL := fs.String("exit", "", "where routed traffic leaves: direct, socks5://host:port or http://host:port")
 	advertise := fs.String("advertise", "", "this machine's LAN IPv4 address, if the automatic one is wrong")
 	logLevel := fs.String("log-level", "", "debug, info, warn or error")

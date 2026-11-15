@@ -1,15 +1,14 @@
-// Package gateway is psxroute's gateway mode on macOS. The console uses this
-// Mac as its default gateway and the kernel forwards its traffic. Routed
+// Package gateway is psxroute's gateway mode. The console uses this computer
+// as its default gateway and the kernel forwards its traffic. Routed
 // addresses get host routes through the VPN's tunnel interface; everything
-// else follows this Mac's default route. pf only NATs.
+// else follows this computer's default route.
 //
-// pf's route-to isn't used: on macOS 27 it panics the kernel ("Bounds safety
-// trap") on the first forwarded packet. Ordinary routes plus forwarding is
-// the path Internet Sharing uses, and is far better exercised.
+// The routing logic is shared; a System does the operating system's part:
+// pf and route(8) on macOS (pf.go), the IP Helper API, netsh and WinNAT on
+// Windows (windows.go).
 //
 // Every change is undone by Close. If psxroute is killed before it can clean
-// up, `psxroute cleanup` does the same: the routes it added are listed in
-// StatePath, which lives in /var/run so it goes when the routes do, at reboot.
+// up, `psxroute cleanup` does the same from the list kept at StatePath.
 package gateway
 
 import (
@@ -20,24 +19,31 @@ import (
 	"net"
 	"os"
 	"os/exec"
-	"regexp"
+	"path/filepath"
 	"runtime"
-	"sort"
 	"strings"
 	"sync"
 )
-
-// Anchor sits under Apple's com.apple/* anchors, which the stock
-// /etc/pf.conf already evaluates for nat, rdr, scrub and filter rules.
-const Anchor = "com.apple/psxroute"
 
 // MaxAddrs caps the routed addresses so a misbehaving rule can't grow the
 // routing table forever.
 const MaxAddrs = 20000
 
-// StatePath lists the routes psxroute added, one destination per line, so
-// Cleanup can remove them after a crash. A variable so tests can move it.
-var StatePath = "/var/run/psxroute.routes"
+// StatePath records what psxroute changed, so Cleanup can undo it after a
+// crash. On macOS it lives in /var/run, which a reboot clears along with the
+// routes. A variable so tests can move it.
+var StatePath = defaultStatePath()
+
+func defaultStatePath() string {
+	if runtime.GOOS == "windows" {
+		dir := os.Getenv("ProgramData")
+		if dir == "" {
+			dir = `C:\ProgramData`
+		}
+		return filepath.Join(dir, "psxroute", "gateway.json")
+	}
+	return "/var/run/psxroute.routes"
+}
 
 // allHalves cover every IPv4 address while staying more specific than the
 // default route, the way VPN clients take over all traffic.
@@ -64,115 +70,110 @@ func (ExecRunner) Run(ctx context.Context, stdin, name string, args ...string) (
 	return string(out), nil
 }
 
+// System is the operating system's half of gateway mode. The Gateway
+// serialises calls to it.
+type System interface {
+	// DefaultRoute reports where this computer's own traffic leaves: an
+	// interface name and its next hop (nil for a tunnel or if unknown).
+	DefaultRoute(ctx context.Context, ifaces []Iface) (string, net.IP)
+	// Setup clears anything a crashed run left, then switches forwarding
+	// and NAT on for s. After an error, Teardown undoes what was done.
+	Setup(ctx context.Context, s Settings) error
+	// AddRoute sends dst (an address or a CIDR) through the tunnel. It
+	// returns false when the route already existed, so it isn't psxroute's
+	// to remove.
+	AddRoute(ctx context.Context, dst string) (added bool, err error)
+	// DeleteRoute removes a route AddRoute added. One already gone is fine.
+	DeleteRoute(ctx context.Context, dst string) error
+	// Save records the routes psxroute owns at StatePath for Cleanup.
+	Save(owned []string) error
+	// Teardown undoes Setup.
+	Teardown(ctx context.Context) error
+	// Cleanup undoes everything a crashed run left, from StatePath.
+	Cleanup(ctx context.Context) error
+}
+
+// NewSystem returns this operating system's System.
+func NewSystem(run Runner) (System, error) {
+	switch runtime.GOOS {
+	case "darwin":
+		return PF(run), nil
+	case "windows":
+		return Windows(run, newIPHelper()), nil
+	}
+	return nil, unsupported()
+}
+
+func unsupported() error {
+	return fmt.Errorf("gateway mode works on macOS and Windows so far (this is %s); use mode: relay", runtime.GOOS)
+}
+
+// Preflight checks the platform and privileges gateway mode needs.
+func Preflight() error {
+	switch runtime.GOOS {
+	case "darwin":
+		if os.Geteuid() != 0 {
+			return errors.New("gateway mode changes the firewall and routing: run it with sudo")
+		}
+	case "windows":
+		if !isElevated() {
+			return errors.New("gateway mode changes routing and NAT: run psxroute from a terminal opened as Administrator")
+		}
+	default:
+		return unsupported()
+	}
+	return nil
+}
+
+// Command is how to start gateway mode on this computer, for messages.
+func Command() string {
+	if runtime.GOOS == "windows" {
+		return "psxroute --mode gateway (in a terminal opened as Administrator)"
+	}
+	return "sudo psxroute --mode gateway"
+}
+
 // Settings describe the network the gateway sits in.
 type Settings struct {
-	LANIface string     // e.g. en0
-	LANIP    net.IP     // this Mac on the LAN
+	LANIface string     // e.g. en0, or Ethernet on Windows
+	LANIndex int        // its interface index
+	LANIP    net.IP     // this computer on the LAN
 	LANNet   *net.IPNet // the console's subnet
 
-	DefaultIface string // where this Mac's default route goes, e.g. en0 or utun4
+	DefaultIface string // where this computer's default route goes
 	DefaultGW    net.IP // its next hop; nil for a tunnel or if unknown
 
-	Tunnel    string // e.g. utun4
-	TunnelMTU int
+	Tunnel      string // e.g. utun4, or the VPN adapter's name on Windows
+	TunnelIndex int
+	TunnelMTU   int
 
 	RouteAll bool     // send all console internet traffic through the tunnel
 	CIDRs    []string // ranges always routed
 }
 
-// Preflight checks the platform and privileges gateway mode needs.
-func Preflight() error {
-	if runtime.GOOS != "darwin" {
-		return fmt.Errorf("gateway mode is only supported on macOS so far (this is %s); use mode: relay", runtime.GOOS)
-	}
-	if os.Geteuid() != 0 {
-		return errors.New("gateway mode changes the firewall and routing: run it with sudo")
-	}
-	return nil
-}
-
-// Rules renders the pf anchor for s. It only clamps MSS and NATs: the
-// routing table decides which interface a packet leaves by.
-func Rules(s Settings) string {
-	lan := s.LANNet.String()
-	tun := s.Tunnel
-	var b strings.Builder
-	fmt.Fprintf(&b, "# psxroute gateway rules: removed when psxroute stops, or by `psxroute cleanup`\n")
-	if s.TunnelMTU > 0 {
-		// Tunnels have a smaller MTU than Ethernet; clamp TCP so the console's
-		// full-size segments don't get dropped.
-		fmt.Fprintf(&b, "scrub on %s inet all max-mss %d\n", tun, s.TunnelMTU-40)
-	}
-	// This Mac's own traffic keeps its address.
-	fmt.Fprintf(&b, "no nat on %s inet from %s to any\n", s.LANIface, s.LANIP)
-	fmt.Fprintf(&b, "nat on %s inet from %s to any -> (%s)\n", tun, lan, tun)
-	fmt.Fprintf(&b, "nat on %s inet from %s to ! %s -> (%s)\n", s.LANIface, lan, lan, s.LANIface)
-	return b.String()
-}
-
-// routeArgs builds route(8) arguments for an address or a CIDR.
-func routeArgs(verb, dst string) []string {
-	if strings.Contains(dst, "/") && !strings.HasSuffix(dst, "/32") {
-		return []string{"-n", verb, "-net", dst}
-	}
-	return []string{"-n", verb, "-host", strings.TrimSuffix(dst, "/32")}
-}
-
 // Gateway is the running gateway. Its methods are safe for concurrent use.
 type Gateway struct {
 	s   Settings
-	run Runner
+	sys System
 	log *slog.Logger
 
-	mu      sync.Mutex        // held across route commands so the table and maps agree
-	added   map[string]bool   // addresses learnt from DNS
-	owned   map[string]bool   // routes psxroute added and must remove
-	token   string            // pf enable reference
-	restore map[string]string // sysctl name → value before we changed it
-	closed  bool
+	mu     sync.Mutex      // held across system calls so the table and maps agree
+	added  map[string]bool // addresses learnt from DNS
+	owned  map[string]bool // routes psxroute added and must remove
+	closed bool
 }
 
-var tokenRe = regexp.MustCompile(`Token\s*:\s*(\d+)`)
-
-// Start applies s: forwarding on, ICMP redirects off, NAT rules loaded, pf
-// enabled, fixed routes added. On error everything already applied is undone.
-func Start(ctx context.Context, s Settings, run Runner, log *slog.Logger) (_ *Gateway, err error) {
-	g := &Gateway{s: s, run: run, log: log, added: map[string]bool{}, owned: map[string]bool{}, restore: map[string]string{}}
+// Start applies s through sys: forwarding and NAT on, fixed routes added. On
+// error everything already applied is undone.
+func Start(ctx context.Context, s Settings, sys System, log *slog.Logger) (_ *Gateway, err error) {
+	g := &Gateway{s: s, sys: sys, log: log, added: map[string]bool{}, owned: map[string]bool{}}
 	defer func() {
 		if err != nil {
 			g.Close()
 		}
 	}()
-	// Clear anything a crashed run left behind.
-	if err := cleanupRoutes(ctx, run); err != nil {
-		log.Warn("couldn't remove routes left by an earlier run", "err", err)
-	}
-	_, _ = run.Run(ctx, "", "pfctl", "-a", Anchor, "-F", "all")
-
-	for name, want := range map[string]string{
-		"net.inet.ip.forwarding": "1",
-		// Redirects would tell the console to bypass this Mac for addresses
-		// that aren't routed; that skips the NAT and breaks connections.
-		"net.inet.ip.redirect": "0",
-	} {
-		prev, err := run.Run(ctx, "", "sysctl", "-n", name)
-		if err != nil {
-			return nil, err
-		}
-		g.restore[name] = strings.TrimSpace(prev)
-		if _, err := run.Run(ctx, "", "sysctl", "-w", name+"="+want); err != nil {
-			return nil, err
-		}
-	}
-	if _, err := run.Run(ctx, Rules(s), "pfctl", "-a", Anchor, "-f", "-"); err != nil {
-		return nil, fmt.Errorf("load pf rules: %w", err)
-	}
-	out, err := run.Run(ctx, "", "pfctl", "-E")
-	if err != nil {
-		return nil, fmt.Errorf("enable pf: %w", err)
-	}
-	if m := tokenRe.FindStringSubmatch(out); m != nil {
-		g.token = m[1]
+	if err := sys.Setup(ctx, s); err != nil {
+		return nil, err
 	}
 
 	g.mu.Lock()
@@ -197,14 +198,13 @@ func (g *Gateway) addRoute(ctx context.Context, dst string) error {
 	if g.owned[dst] {
 		return nil
 	}
-	_, err := g.run.Run(ctx, "", "route", append(routeArgs("add", dst), "-interface", g.s.Tunnel)...)
+	added, err := g.sys.AddRoute(ctx, dst)
 	if err != nil {
-		if strings.Contains(err.Error(), "File exists") {
-			return nil
-		}
 		return err
 	}
-	g.owned[dst] = true
+	if added {
+		g.owned[dst] = true
+	}
 	return nil
 }
 
@@ -214,27 +214,20 @@ func (g *Gateway) deleteRoute(ctx context.Context, dst string) error {
 	if !g.owned[dst] {
 		return nil
 	}
-	if _, err := g.run.Run(ctx, "", "route", routeArgs("delete", dst)...); err != nil && !strings.Contains(err.Error(), "not in table") {
+	if err := g.sys.DeleteRoute(ctx, dst); err != nil {
 		return err
 	}
 	delete(g.owned, dst)
 	return nil
 }
 
-// persist writes the owned routes to StatePath. The caller holds g.mu.
+// persist records the owned routes. The caller holds g.mu.
 func (g *Gateway) persist() {
-	if len(g.owned) == 0 {
-		if err := os.Remove(StatePath); err != nil && !errors.Is(err, os.ErrNotExist) {
-			g.log.Warn("couldn't remove route list", "path", StatePath, "err", err)
-		}
-		return
-	}
 	lines := make([]string, 0, len(g.owned))
 	for d := range g.owned {
 		lines = append(lines, d)
 	}
-	sort.Strings(lines)
-	if err := os.WriteFile(StatePath, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+	if err := g.sys.Save(lines); err != nil {
 		g.log.Warn("couldn't save route list; `psxroute cleanup` may miss routes after a crash", "path", StatePath, "err", err)
 	}
 }
@@ -338,9 +331,9 @@ func (g *Gateway) RouteAll() bool {
 
 // SetRouteAll switches between routing everything and routing only routed
 // addresses, by adding or removing two routes that cover every address.
-// They apply to this Mac's own traffic too. Connections already open move
-// with the route; the NAT keeps them working only on the new path's address,
-// so some may need reopening.
+// They apply to this computer's own traffic too. Connections already open
+// move with the route; the NAT keeps them working only on the new path's
+// address, so some may need reopening.
 func (g *Gateway) SetRouteAll(ctx context.Context, on bool) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -375,8 +368,8 @@ func (g *Gateway) SetRouteAll(ctx context.Context, on bool) error {
 	return nil
 }
 
-// Close removes the routes and rules, releases pf and restores the sysctls.
-// It is safe to call more than once.
+// Close removes the routes, then undoes the system's setup. It is safe to
+// call more than once.
 func (g *Gateway) Close() {
 	g.mu.Lock()
 	if g.closed {
@@ -387,62 +380,29 @@ func (g *Gateway) Close() {
 	ctx := context.Background()
 	for d := range g.owned {
 		if err := g.deleteRoute(ctx, d); err != nil {
-			g.log.Warn("couldn't remove route; run `sudo psxroute cleanup`", "dst", d, "err", err)
+			g.log.Warn("couldn't remove route; run `psxroute cleanup` as administrator", "dst", d, "err", err)
 		}
 	}
 	g.persist()
 	g.mu.Unlock()
-	if _, err := g.run.Run(ctx, "", "pfctl", "-a", Anchor, "-F", "all"); err != nil {
-		g.log.Warn("couldn't remove pf rules; run `sudo psxroute cleanup`", "err", err)
-	}
-	if g.token != "" {
-		_, _ = g.run.Run(ctx, "", "pfctl", "-X", g.token)
-	}
-	for name, v := range g.restore {
-		if v == "" {
-			continue
-		}
-		if _, err := g.run.Run(ctx, "", "sysctl", "-w", name+"="+v); err != nil {
-			g.log.Warn("couldn't restore sysctl", "name", name, "err", err)
-		}
+	if err := g.sys.Teardown(ctx); err != nil {
+		g.log.Warn("couldn't undo every change; run `psxroute cleanup` as administrator", "err", err)
 	}
 }
 
-// cleanupRoutes removes the routes listed in StatePath, then the list.
-func cleanupRoutes(ctx context.Context, run Runner) error {
-	data, err := os.ReadFile(StatePath)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	var errs []error
-	for _, d := range strings.Fields(string(data)) {
-		if _, err := run.Run(ctx, "", "route", routeArgs("delete", d)...); err != nil && !strings.Contains(err.Error(), "not in table") {
-			errs = append(errs, err)
-		}
-	}
-	if err := errors.Join(errs...); err != nil {
-		return err
-	}
-	return os.Remove(StatePath)
+// Cleanup undoes what a crashed run left behind.
+func Cleanup(ctx context.Context, sys System) error {
+	return sys.Cleanup(ctx)
 }
 
-// Cleanup removes psxroute's routes and rules and puts forwarding and
-// redirects back to macOS defaults, for after a crash.
-func Cleanup(ctx context.Context, run Runner) error {
-	var errs []error
-	if err := cleanupRoutes(ctx, run); err != nil {
-		errs = append(errs, err)
+// parseDst reads an address or CIDR as an IPv4 network.
+func parseDst(dst string) (*net.IPNet, error) {
+	if !strings.Contains(dst, "/") {
+		dst += "/32"
 	}
-	if _, err := run.Run(ctx, "", "pfctl", "-a", Anchor, "-F", "all"); err != nil {
-		errs = append(errs, err)
+	_, n, err := net.ParseCIDR(dst)
+	if err != nil || n.IP.To4() == nil {
+		return nil, fmt.Errorf("%q isn't an IPv4 address or range", dst)
 	}
-	for _, kv := range []string{"net.inet.ip.forwarding=0", "net.inet.ip.redirect=1"} {
-		if _, err := run.Run(ctx, "", "sysctl", "-w", kv); err != nil {
-			errs = append(errs, err)
-		}
-	}
-	return errors.Join(errs...)
+	return n, nil
 }
